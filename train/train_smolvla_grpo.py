@@ -1,12 +1,28 @@
+
+import torch
+import torch.nn as nn
+import json
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
-import torch.nn as nn
-import json
+def main():
+    policy = SmolVLAPolicy.from_pretrained(
+        "HuggingFaceVLA/smolvla_libero")
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    policy.to(device)
 
-policy = SmolVLAPolicy.from_pretrained("HuggingFaceVLA/smolvla_libero")
+    policy.train()
 
-# cfg = json.load(open(hf_hub_download("HuggingFaceVLA/smolvla_libero", "config.json")))
-# print(cfg)
+    optimizer = torch.optim.AdamW(
+        policy.parameters(),
+        lr=1e-5,
+        betas=(0.9, 0.95)
+    )
+    
+    
+    env = make_libero_env("libero_spatial")
 
-print(isinstance(policy, nn.Module))
+
+if __name__ == "__main__":
+    main()
