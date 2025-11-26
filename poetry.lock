@@ -5080,6 +5080,21 @@ video = ["av"]
 vision = ["Pillow (>=10.0.1,<=15.0)"]
 
 [[package]]
+name = "transforms3d"
+version = "0.4.2"
+description = "Functions for 3D coordinate transformations"
+optional = false
+python-versions = ">=3.6"
+groups = ["main"]
+files = [
+    {file = "transforms3d-0.4.2-py3-none-any.whl", hash = "sha256:1c70399d9e9473ecc23311fd947f727f7c69ed0b063244828c383aa1aefa5941"},
+    {file = "transforms3d-0.4.2.tar.gz", hash = "sha256:e8b5df30eaedbee556e81c6938e55aab5365894e47d0a17615d7db7fd2393680"},
+]
+
+[package.dependencies]
+numpy = ">=1.15"
+
+[[package]]
 name = "triton"
 version = "3.3.1"
 description = "A language and compiler for custom Deep Learning operations"
@@ -5570,4 +5585,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "93b5a5746a7b54d75d006b29722e6f5b04a82275421479c4860ea61f3e434042"
+content-hash = "404ea3009e8ed481e8591e6d50c2b429a7176673b7652f980cd0cb5899f34429"
