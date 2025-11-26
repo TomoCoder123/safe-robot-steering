@@ -6,6 +6,8 @@ import os
 from LIBERO.libero.libero.envs import OffScreenRenderEnv
 import numpy as np
 
+# TODO: vectorize envs
+
 TASK_SUITE_NAME = "libero_10" # long-range tasks
 
 # take before image, move robot around, take after image
