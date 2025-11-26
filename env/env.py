@@ -90,7 +90,7 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
     if init_states is not None and len(init_states) > 0:
         random_id = np.random.randint(len(init_states))
         env.set_init_state(init_states[random_id])    
-        print(f"Setting rand init state: {init_states[random_id]}")
+        print(f"Setting rand init state")
 
     if seed:
         env.seed(seed)

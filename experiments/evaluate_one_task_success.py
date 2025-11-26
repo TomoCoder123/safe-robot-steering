@@ -4,8 +4,7 @@ import torch
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
-ENV_NUM = 1
-ACTION_DIM = 7
+TASK_SUITE_NAME = "libero_10"
 def main():
     # Load SmolVLA policy
     policy = SmolVLALiberoPolicy(
@@ -19,8 +18,9 @@ def main():
         betas=(0.9, 0.95)
     )
 
-    env, language = make_libero_env()
-    env.reset()
+    env, language = make_libero_env(TASK_SUITE_NAME)
+    print(f"Task description: {language}")
+    obs = env.reset()
     
     # simple rollout
     for step in range(10):
