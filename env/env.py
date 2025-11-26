@@ -96,4 +96,4 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
         env.seed(seed)
     env.reset()
 
-    return env
+    return env, task.language
