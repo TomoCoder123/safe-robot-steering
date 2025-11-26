@@ -1,9 +1,9 @@
 from LIBERO.libero.libero import benchmark
 from LIBERO.libero.libero.envs import OffScreenRenderEnv
-import os
 import numpy as np
-import gymnasium
 import multiprocessing as mp
+import os
+import gymnasium
 
 mp.set_start_method("spawn", force=True) # avoid deadlocks form fork
 # these are just defined by the task formulation
@@ -32,8 +32,12 @@ class VectorizedOffScreenEnv(OffScreenRenderEnv):
         self.action_space = ACTION_SPACE
         self.observation_space = OBSERVATION_SPACE
 
-    def libero_obsv_to_smolvla(self, libero_obsv):
-        return { "" }
+# sub environment creation callable for gymnasium vectorization 
+def libero_factory(task_suite_name, task_id=None, camera_heights=256, camera_widths=256):
+    def _thunk():
+        env = make_libero_env(task_suite_name, task_id, camera_heights, camera_widths, vectorized=True)
+        return env
+    return _thunk
 
 # take before image of environment, move robot around, take after image
 def test_libero_env(env, num_steps=50):
@@ -58,7 +62,7 @@ the environment for one task within the specified task suite with a random initi
 task_id is an optional int. If left as None, a random task_id will be chosen
 task_suite_name is one of libero_10, libero_spatial, etc. 
 camera_heights and camera_widths determine image resolution of agentview observations per time step"""
-def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_widths=256, vectorized=False):
+def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_widths=256, vectorized=False, seed=None):
     benchmark_dict = benchmark.get_benchmark_dict()
     task_suite = benchmark_dict[task_suite_name]()
 
@@ -67,10 +71,11 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
         task_id = np.random.randint(task_suite.n_tasks)
         print(f"Setting random task")
     task = task_suite.get_task(task_id)
-    task_description = task.language
     task_bddl_file = os.path.join(benchmark.get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
-    print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
-        f"language instruction is {task_description}, and the bddl file is {task_bddl_file}")
+
+    print(f"[INFO] Loading LIBERO Task {task_id} ({task_suite_name})")
+    print(f"[INFO] Instruction: {task.language}")
+    print(f"[INFO] BDDL File: {task_bddl_file}")
 
     env_args = {
         "bddl_file_name": task_bddl_file,
@@ -87,13 +92,8 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
         env.set_init_state(init_states[random_id])    
         print(f"Setting rand init state: {init_states[random_id]}")
 
+    if seed:
+        env.seed(seed)
     env.reset()
 
     return env
-
-# sub environment creation callable for gymnasium vectorization 
-def libero_factory(task_suite_name, task_id=None, camera_heights=256, camera_widths=256):
-    def _thunk():
-        env = make_libero_env(task_suite_name, task_id, camera_heights, camera_widths, vectorized=True)
-        return env
-    return _thunk
