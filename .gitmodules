@@ -1,5 +1,5 @@
 [submodule "lerobot"]
-	path = lerobot
+	path = lerobot-local
 	url = https://github.com/huggingface/lerobot
 [submodule "LIBERO"]
 	path = LIBERO
