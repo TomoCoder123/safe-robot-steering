@@ -5,6 +5,7 @@ from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
 TASK_SUITE_NAME = "libero_10"
+
 def main():
     # Load SmolVLA policy
     policy = SmolVLALiberoPolicy(
@@ -25,6 +26,7 @@ def main():
     # simple rollout
     for step in range(10):
         action = policy.get_action(obs, language)
+        action = action.clone().cpu()[0]
         obs, reward, done, info = env.step(action)
         
         print(f"Step {step} | Reward: {reward:.3f}")

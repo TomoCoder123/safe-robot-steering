@@ -1,3 +1,4 @@
 *.egg-info/
 *.png
 */__pycache__
+ignore/

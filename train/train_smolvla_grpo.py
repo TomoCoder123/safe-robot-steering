@@ -1,10 +1,9 @@
 import torch
 from torch import nn
 import numpy as np
-import torch.serialization
-torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
+# torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-from gymnasium.vector import AsyncVectorEnv
+# from gymnasium.vector import AsyncVectorEnv
 # from env import libero_factory
 from env.env import make_libero_env
 
