@@ -55,11 +55,14 @@ def test_libero_env(env, num_steps=50):
     Image.fromarray(np.flipud(final_obs["agentview_image"])).save("after.png")
     print(f"Saved after image")
 
-def snapshot_obs(obs, save_path):
+def snapshot_obs(obs, save_path, agentview=True):
     from PIL import Image
     # flip because OpenGL and PIL coordinate systems are upside down of each other
-    Image.fromarray(np.flipud(obs["agentview_image"])).save(save_path)
-    print(f"Saved agentview image to {save_path}")
+    if agentview:
+        Image.fromarray(np.flipud(obs["agentview_image"])).save(save_path)
+    else:
+        Image.fromarray(np.flipud(obs["robot0_eye_in_hand_image"])).save(save_path)
+    print(f"Saved image to {save_path}")
 
 """Implementation based off of what's in libero's README getting started section. This function sets up
 the environment for one task within the specified task suite with a random initialization
