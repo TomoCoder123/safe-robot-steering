@@ -12,6 +12,9 @@ import transforms3d
 # I just referenced how they do things and made it so we do each step within our own mapping code from LIBERO observation -> model input
 # from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
+# NOTE: for some reason accelerate may try to distribute the model during runtime, leading to device mismatches. If this happens,
+# set CUDA_VISIBLE_DEVICES to one device
+
 class SmolVLALiberoPolicy:
     """
     Adapter that converts LIBERO's obs format to the LeRobot SmolVLA format.
@@ -29,7 +32,6 @@ class SmolVLALiberoPolicy:
         self.device = device
         self.policy = SmolVLAPolicy.from_pretrained(model_name)
         self.policy.to(device)
-        self.policy.eval()
         self.parameters = self.policy.parameters 
         self.img_transform = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
         # tokenizer as determined by the tokenization step of the preprocessing pipeline defined in make_smolvla_pre_post_processors
@@ -115,9 +117,6 @@ class SmolVLALiberoPolicy:
         # LIBERO requires action in [-1, 1]. GRPO update requires tensor with grad history so return that.
         # Can convert to other formats if needed (eg for passing into env.step)
         action = torch.clamp(action, -1.0, 1.0)
-        # TODO: this should be fixed by removing the torch.no_grad annotation on select_action, but it appears the libero version being used
-        # is the public package and local changes to the submodule aren't being used
-        assert action.grad is not None
 
         return action
 
