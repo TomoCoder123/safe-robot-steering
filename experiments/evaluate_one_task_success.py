@@ -5,7 +5,7 @@ from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env, snapshot_obs
 
 TASK_SUITE_NAME = "libero_10"
-
+STEPS = 280 #lerobot libero default
 def main():
     # Load SmolVLA policy
     policy = SmolVLALiberoPolicy(
@@ -25,7 +25,7 @@ def main():
     snapshot_obs(obs, "before.png")
     
     # simple rollout. For GRPO we can rollout with no_grad but will need grads when recomputing new model log densities for chosen actions
-    for step in range(50):
+    for step in range(STEPS):
         with torch.no_grad():
             action = policy.get_action(obs, language)
             action = action.cpu().clone().detach().tolist()[0]

@@ -77,7 +77,7 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
     # retrieve a specific task
     if task_id is None:
         task_id = np.random.randint(task_suite.n_tasks)
-        print(f"Setting random task")
+        print(f"Setting random task, {task_id}")
     task = task_suite.get_task(task_id)
     task_bddl_file = os.path.join(benchmark.get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
 
