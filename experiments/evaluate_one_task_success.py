@@ -21,7 +21,7 @@ def main():
         betas=(0.9, 0.95)
     )
 
-    env, language = make_libero_env(TASK_SUITE_NAME)
+    env, language = make_libero_env(TASK_SUITE_NAME, task_id=1)
     print(f"Task description: {language}")
     obs = env.reset()
     snapshot_obs(obs, "before.png")

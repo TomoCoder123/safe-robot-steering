@@ -6,6 +6,10 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from torchvision.transforms import v2
 from transformers import AutoTokenizer
+from utils.find_normalizer_constants import obtain_dataset_normalizer_stats
+from utils.find_unnormalizer_constants import obtain_dataset_unnormalizer_stats
+from robosuite.utils.transform_utils import quat2axisangle
+
 import transforms3d
 
 # NOTE: there are these already-configured pre/post processing pipelines in lerobot but they're very convoluted and buggy.
@@ -39,12 +43,25 @@ class SmolVLALiberoPolicy:
         vla_config = SmolVLAConfig()
         self.max_token_length = vla_config.tokenizer_max_length
         self.tokenizer = AutoTokenizer.from_pretrained(
-            "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+            "HuggingFaceTB/SmolVLM2-500M-Instruct" # is it that or SmolVLM2-500M-Instruct
         )
+        self.state_mean = obtain_dataset_normalizer_stats()["observation.state.mean"]
+        self.state_std =  obtain_dataset_normalizer_stats()["observation.state.std"]
+
+        self.action_mean = obtain_dataset_unnormalizer_stats()["action.mean"]
+        self.action_std =  obtain_dataset_unnormalizer_stats()["action.std"]
+        self.eps = 1e-8
 
     def _extract_images(self, obs):
+        print(obs)
+        
         agentview_img = obs["agentview_image"]       # (H,W,3)
+
         eye_img = obs["robot0_eye_in_hand_image"]     # (H,W,3)
+
+        agentview_img = np.fliplr(np.flipud(obs["agentview_image"]).copy()).copy() # could be inefficient not sure
+        eye_img = np.fliplr(np.flipud(obs["robot0_eye_in_hand_image"]).copy()).copy()
+
 
         agentview_img = self.img_transform(agentview_img)
         eye_img = self.img_transform(eye_img)
@@ -52,23 +69,46 @@ class SmolVLALiberoPolicy:
         return agentview_img, eye_img
 
     def _extract_state(self, obs):
-        pos = obs["robot0_eef_pos"]   # (3,)
+        pos = obs["robot0_eef_pos"]                  # (3,) #from lerobot make_env
+        quat = obs["robot0_eef_quat"]                # (4,)
+        axis_angle = quat2axisangle(quat)            # (3,)
+        g0, g1 = obs["robot0_gripper_qpos"]          # (2,)
 
-        quat = obs["robot0_eef_quat"]  # (4,)
-        roll, pitch, yaw = transforms3d.euler.quat2euler(quat)  # matches LIBERO conventions
+        state = np.concatenate(
+            (pos, axis_angle, np.array([g0, g1], dtype=np.float32)),
+            dtype=np.float32,
+        )
 
-        # 3. Gripper (2)
-        grip = obs["robot0_gripper_qpos"]  # (2,)
+        normalized_state = self._normalize_state(state)
+        return normalized_state
+    def _normalize_state(self, state_raw):
+        """
+        Normalize the 8D state vector using the dataset statistics stored
+        in the normalizer processor safetensors file.
+        """
 
-        # 4. Final 8-dim state
-        state = np.array([
-            pos[0], pos[1], pos[2],
-            roll, pitch, yaw,
-            grip[0], grip[1]
-        ], dtype=np.float32)
+        if not isinstance(state_raw, torch.Tensor):
+            state_raw = torch.tensor(state_raw, dtype=torch.float32)
 
-        return torch.from_numpy(state).float()
 
+        state_norm = (state_raw - self.state_mean) / (self.state_std + self.eps)
+
+        
+
+        return state_norm
+    
+    def _unnormalize_action(self, action_norm):
+        """
+        Convert normalized action from the model back to real action.
+        SmolVLA outputs normalized actions → we unnormalize using:
+            real = norm * std + mean
+        """
+        action_norm = action_norm.to('cpu') # hacky fix but in a rush
+        self.action_std = self.action_std.to('cpu')
+        self.action_mean = self.action_mean.to('cpu')
+
+        return action_norm * self.action_std + self.action_mean
+    
     def _tokenize_prompt(self, task_description):
         if not task_description.endswith("\n"): # model expects \n at end of each prompt
             task_description = f"{task_description}\n"
@@ -77,7 +117,7 @@ class SmolVLALiberoPolicy:
             [task_description],  
             max_length=self.max_token_length,
             truncation=True,
-            padding="max_length",
+            padding='do_not_pad',
             return_tensors="pt"
         )
         tokens = tokenized["input_ids"]  # (1, max_token_length)
@@ -110,14 +150,17 @@ class SmolVLALiberoPolicy:
 
     def get_action(self, obs, language):
         batch = self._build_batch(obs, language)
-        
+        print(f"batch {batch}")
         # Use select_action() for inference (not forward() which is for training)
         # select_action() returns a single action: (batch_size, action_dim)
         action = self.policy.select_action(batch)
+        action_real = self._unnormalize_action(action)
+
+        print(f"action {action_real}")
         
         # LIBERO requires action in [-1, 1]. GRPO update requires tensor with grad history so return that.
         # Can convert to other formats if needed (eg for passing into env.step)
-        action = torch.clamp(action, -1.0, 1.0)
+        action = torch.clamp(action_real, -1.0, 1.0)
 
         return action
 

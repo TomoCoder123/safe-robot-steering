@@ -66,10 +66,10 @@ def snapshot_obs(obs, save_path, agentview=True):
 
 
 def get_agentview_frame(obs):
-    return np.flipud(obs["agentview_image"])
+    return np.fliplr(np.flipud(obs["agentview_image"]))
 
 def get_wrist_frame(obs):
-    return np.flipud(obs["robot0_eye_in_hand_image"])
+    return np.fliplr(np.flipud(obs["robot0_eye_in_hand_image"]))
 
 """Implementation based off of what's in libero's README getting started section. This function sets up
 the environment for one task within the specified task suite with a random initialization
