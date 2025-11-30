@@ -4,11 +4,15 @@ import torch
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env, snapshot_obs, get_agentview_frame, get_wrist_frame
 import imageio
+import os
 FPS = 60
 
 TASK_SUITE_NAME = "libero_spatial" 
 STEPS = 280 #lerobot libero default for object, 520 is default for long
 def main():
+    print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
+    print("torch.cuda.device_count():", torch.cuda.device_count())
+
     # Load SmolVLA policy
     policy = SmolVLALiberoPolicy(
         "HuggingFaceVLA/smolvla_libero", device="cuda"
@@ -21,7 +25,7 @@ def main():
         betas=(0.9, 0.95)
     )
 
-    env, language = make_libero_env(TASK_SUITE_NAME, task_id=1)
+    env, language = make_libero_env(TASK_SUITE_NAME)
     print(f"Task description: {language}")
     obs = env.reset()
     snapshot_obs(obs, "before.png")
@@ -35,7 +39,6 @@ def main():
     print(f"Recording agentview -> {agentview_path}")
     print(f"Recording wristcam -> {wristcam_path}")
     
-
     # Write first frames
     agent_writer.append_data(get_agentview_frame(obs))
     wrist_writer.append_data(get_wrist_frame(obs))

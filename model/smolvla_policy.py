@@ -10,8 +10,6 @@ from utils.find_normalizer_constants import obtain_dataset_normalizer_stats
 from utils.find_unnormalizer_constants import obtain_dataset_unnormalizer_stats
 from robosuite.utils.transform_utils import quat2axisangle
 
-import transforms3d
-
 # NOTE: there are these already-configured pre/post processing pipelines in lerobot but they're very convoluted and buggy.
 # I just referenced how they do things and made it so we do each step within our own mapping code from LIBERO observation -> model input
 # from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
@@ -53,8 +51,6 @@ class SmolVLALiberoPolicy:
         self.eps = 1e-8
 
     def _extract_images(self, obs):
-        print(obs)
-        
         agentview_img = obs["agentview_image"]       # (H,W,3)
 
         eye_img = obs["robot0_eye_in_hand_image"]     # (H,W,3)
@@ -150,13 +146,10 @@ class SmolVLALiberoPolicy:
 
     def get_action(self, obs, language):
         batch = self._build_batch(obs, language)
-        print(f"batch {batch}")
         # Use select_action() for inference (not forward() which is for training)
         # select_action() returns a single action: (batch_size, action_dim)
         action = self.policy.select_action(batch)
         action_real = self._unnormalize_action(action)
-
-        print(f"action {action_real}")
         
         # LIBERO requires action in [-1, 1]. GRPO update requires tensor with grad history so return that.
         # Can convert to other formats if needed (eg for passing into env.step)
