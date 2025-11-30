@@ -1,6 +1,7 @@
 # smolvla_policy.py
 
 import torch
+from torch import nn
 import numpy as np
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
@@ -17,9 +18,6 @@ from robosuite.utils.transform_utils import quat2axisangle
 # NOTE: for some reason accelerate may try to distribute the model during runtime, leading to device mismatches. If this happens,
 # set CUDA_VISIBLE_DEVICES to one device
 
-MIN_LOG_STD = -20.0
-MAX_LOG_STD = 2.0
-
 class SmolVLALiberoPolicy:
     """
     Adapter that converts LIBERO's obs format to the LeRobot SmolVLA format.
@@ -35,7 +33,7 @@ class SmolVLALiberoPolicy:
         print(f"[SmolVLA] Loading pretrained model: {model_name}")
 
         self.device = device
-        self.policy = SmolVLAPolicy.from_pretrained(model_name)
+        self.policy = SmolVLAPolicy.from_pretrained(model_name, strict=False)
         self.policy.to(device)
         self.parameters = self.policy.parameters 
         self.img_transform = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
@@ -53,6 +51,16 @@ class SmolVLALiberoPolicy:
         self.action_std = self.action_std.to(self.device)
         self.action_mean = self.action_mean.to(self.device)
         self.eps = 1e-8
+
+    # by default set log_std to -3. Want very small stds to avoid useless jitter. GRPO will just focus on changing distribution means
+    def set_log_std(self, log_std):
+        new_log_std = torch.full(
+            self.policy.model.log_std.shape,
+            fill_value=log_std,
+            device=self.device,
+            dtype=self.policy.model.log_std.dtype,
+        )
+        self.policy.model.log_std = nn.Parameter(new_log_std)
 
     def train(self):
         self.policy.train()
@@ -163,15 +171,15 @@ class SmolVLALiberoPolicy:
     def get_action_distr_params(self, obs, language):
         batch = self._build_batch(obs, language)
         mean, log_std = self.policy.select_action_distr_params(batch)
-        mean = self._unnormalize_action(mean) # because treating pretrained action outputs as means, need to unnormalize means similarly
+        # we want the pretrained action outputs to be our means. Currently, mean would not be equal to the action output of
+        # the pretrained policy because we haven't normalized, so normalize it
+        mean = self._unnormalize_action(mean)
         
         return mean, log_std
 
     def get_action_distr(self, obs, language):
         mean, log_std = self.get_action_distr_params(obs, language)
 
-        # std head outputs log std so it can output many real numbers. Clamp to avoid excessively small or large stds
-        log_std = torch.clamp(log_std, MIN_LOG_STD, MAX_LOG_STD)
         std = torch.exp(log_std)
         distr = torch.distributions.Normal(mean, std)
 
