@@ -15,7 +15,14 @@ GRPO_EPSILON = 0.2
 # TODO: added autocast so when running things just make sure that isn't causing any errors
 # TODO: maybe add debug logging using logging module just for quality of life
 
-def rollout_one_trajectory(env, policy_old, language):
+def rollout_one_trajectory(env, policy_old, language, rollout_idx=None):
+    print("-" * 60)
+    if rollout_idx is not None:
+        print(f"[ROLLOUT {rollout_idx}] Starting rollout for language:")
+    else:
+        print(f"[ROLLOUT] Starting rollout for language:")
+    print(f"  -> {language}")
+
     obs = env.reset()
     traj_obs, traj_actions, traj_logprobs = [], [], []
     total_reward = 0.0
@@ -26,14 +33,24 @@ def rollout_one_trajectory(env, policy_old, language):
                 action, log_prob, unsquished_action = policy_old.sample_action(obs, language)
 
         env_action = action.cpu().numpy()[0]
+
+        print(f"[ROLLOUT step {step:03d}] reward={float(total_reward):+.3f} "
+              f"action_norm={float(torch.norm(unsquished_action)):.4f} "
+              f"logp={float(log_prob):+.4f}")
+
         traj_obs.append(obs)
         traj_actions.append(unsquished_action.detach())
         traj_logprobs.append(log_prob.detach())
 
         obs, reward, done, info = env.step(env_action)
         total_reward += float(reward)
+
         if done:
+            print(f"[ROLLOUT] Episode finished early at step {step}")
             break
+
+    print(f"[ROLLOUT DONE] total_reward={total_reward:.3f}")
+    print("=" * 60)
 
     return {
         "obs": traj_obs,
@@ -45,14 +62,35 @@ def rollout_one_trajectory(env, policy_old, language):
 
 
 def sample_group_trajectories(env, policy_old, language, G):
-    return [rollout_one_trajectory(env, policy_old, language) for _ in range(G)]
+    print("\n" + "-" * 60)
+    print(f"[GROUP] Collecting {G} trajectories for prompt:\n  \"{language}\"")
+    print("-" * 60 + "\n")
+
+    rollouts = []
+    for i in range(G):
+        rollouts.append(rollout_one_trajectory(env, policy_old, language, rollout_idx=i + 1))
+
+    rewards = [r["reward"] for r in rollouts]
+    print(f"[GROUP SUMMARY] rewards={rewards}")
+    print(f"[GROUP SUMMARY] mean={np.mean(rewards):.3f}, std={np.std(rewards):.3f}")
+    print()
+
+    return rollouts
+
 
 
 def compute_group_advantages(trajs):
     rewards = torch.tensor([t["reward"] for t in trajs], dtype=torch.float32)
     mean_r = rewards.mean()
     std_r = rewards.std()
-    return (rewards - mean_r) / (std_r + 1e-8)
+
+    advantages = (rewards - mean_r) / (std_r + 1e-8)
+
+    print("[ADVANTAGES] Rewards:", rewards.tolist())
+    print("[ADVANTAGES] Advantages:", advantages.tolist())
+    print()
+
+    return advantages
 
 
 def compute_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
@@ -82,6 +120,7 @@ def compute_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
 def collect_batch(env_factory, languages, batch_size, policy_old):
     batch = []
     for i in range(batch_size):
+        print(f"creating batch element {i+1}")
         env, lang = env_factory()  # new task each time
         rollout_group = sample_group_trajectories(env, policy_old, lang, GROUP_SIZE)
         advantages = compute_group_advantages(rollout_group)
@@ -103,7 +142,7 @@ def train_grpo(args):
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
     set_up_policy_grads(policy)
     policy.set_log_std(-3.0)
-
+    print("Set policy gradients and log std.")
     trainable_params = [p for p in policy.policy.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
         trainable_params,
@@ -156,6 +195,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    print("Starting train")
     train_grpo(args)
 
 
