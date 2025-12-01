@@ -2,12 +2,14 @@ import torch
 import numpy as np
 import argparse
 import copy
+from torch.utils.tensorboard import SummaryWriter
+
 
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
 MAX_STEPS = 520
-GROUP_SIZE = 4
+GROUP_SIZE = 1
 UPDATE_EPOCHS = 2
 GRPO_EPSILON = 0.2
 
@@ -15,7 +17,7 @@ GRPO_EPSILON = 0.2
 # TODO: added autocast so when running things just make sure that isn't causing any errors
 # TODO: maybe add debug logging using logging module just for quality of life
 
-def rollout_one_trajectory(env, policy_old, language, rollout_idx=None):
+def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=None):
     print("-" * 60)
     if rollout_idx is not None:
         print(f"[ROLLOUT {rollout_idx}] Starting rollout for language:")
@@ -34,7 +36,7 @@ def rollout_one_trajectory(env, policy_old, language, rollout_idx=None):
 
         env_action = action.cpu().numpy()[0]
 
-        print(f"[ROLLOUT step {step:03d}] reward={float(total_reward):+.3f} "
+        print(f"[ROLLOUT step {step:03d} GROUP {group_num}] reward={float(total_reward):+.3f} "
               f"action_norm={float(torch.norm(unsquished_action)):.4f} "
               f"logp={float(log_prob):+.4f}")
 
@@ -50,7 +52,7 @@ def rollout_one_trajectory(env, policy_old, language, rollout_idx=None):
             break
 
     print(f"[ROLLOUT DONE] total_reward={total_reward:.3f}")
-    print("=" * 60)
+    print("-" * 60)
 
     return {
         "obs": traj_obs,
@@ -61,14 +63,14 @@ def rollout_one_trajectory(env, policy_old, language, rollout_idx=None):
     }
 
 
-def sample_group_trajectories(env, policy_old, language, G):
+def sample_group_trajectories(env, policy_old, language, G, group_num):
     print("\n" + "-" * 60)
     print(f"[GROUP] Collecting {G} trajectories for prompt:\n  \"{language}\"")
     print("-" * 60 + "\n")
 
     rollouts = []
     for i in range(G):
-        rollouts.append(rollout_one_trajectory(env, policy_old, language, rollout_idx=i + 1))
+        rollouts.append(rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=i + 1))
 
     rewards = [r["reward"] for r in rollouts]
     print(f"[GROUP SUMMARY] rewards={rewards}")
@@ -119,10 +121,10 @@ def compute_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
 
 def collect_batch(env_factory, languages, batch_size, policy_old):
     batch = []
-    for i in range(batch_size):
-        print(f"creating batch element {i+1}")
+    for group_num in range(batch_size):
+        print(f"creating batch group {group_num+1}")
         env, lang = env_factory()  # new task each time
-        rollout_group = sample_group_trajectories(env, policy_old, lang, GROUP_SIZE)
+        rollout_group = sample_group_trajectories(env, policy_old, lang, GROUP_SIZE, group_num + 1)
         advantages = compute_group_advantages(rollout_group)
         batch.append((rollout_group, advantages, lang))
         env.close()
@@ -137,6 +139,7 @@ def set_up_policy_grads(policy):
     policy.policy.model.log_std.requires_grad = True
 
 def train_grpo(args):
+    writer = SummaryWriter(log_dir="runs/grpo_smolvla")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
@@ -161,7 +164,7 @@ def train_grpo(args):
         policy.train()
 
         epoch_losses = []
-        for _ in range(UPDATE_EPOCHS):
+        for epoch in range(UPDATE_EPOCHS):
             total_loss = 0.0
             for rollout_group, advantages, lang in batch:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
@@ -179,17 +182,33 @@ def train_grpo(args):
 
         print(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
 
+        writer.add_scalar("Loss/update", avg_loss, update)
+        writer.add_scalar("Reward/update", avg_reward, update)
+
         policy_old_state_dict = {k: v.clone() for k, v in policy.policy.state_dict().items()}
         policy_old.policy.load_state_dict(policy_old_state_dict)
         policy_old.eval()
+        if (update + 1) % args.save_every == 0:
+            save_path = f"{args.save_dir}/policy_update_{update+1}.pt"
+            torch.save({
+                "policy_state_dict": policy.policy.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "update": update,
+                "avg_loss": avg_loss,
+                "avg_reward": avg_reward,
+                "args": vars(args),
+            }, save_path)
+            print(f"[CHECKPOINT] Saved model to {save_path}")
+
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task-suite", type=str, default="libero_10")
-    parser.add_argument("--batch-size", type=int, default=2)     # number of tasks per update
+    parser.add_argument("--batch-size", type=int, default=1)     # number of tasks per update
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--num-updates", type=int, default=200)
+    parser.add_argument("--save-every", type=int, default=10)
     return parser.parse_args()
 
 
