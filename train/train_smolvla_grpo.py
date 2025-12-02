@@ -3,12 +3,12 @@ import numpy as np
 import argparse
 import copy
 from torch.utils.tensorboard import SummaryWriter
-
+from utils.print_gpu import print_gpu
 
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
-MAX_STEPS = 360
+MAX_STEPS = 10
 GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
 GRPO_EPSILON = 0.2
@@ -109,14 +109,59 @@ def compute_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
         for obs_t, unsquished_action_t, old_lp_t in zip(
             traj["obs"], traj["actions"], traj["logprobs"]
         ):
+            print("before get action_probs")
+            print_gpu()
             new_lp = policy_theta.get_action_prob(obs_t, lang, unsquished_action_t.to(policy_theta.device))
             ratio = torch.exp(new_lp - old_lp_t.to(policy_theta.device))
+            print("after get action_probs")
+            print_gpu()
 
             unclipped = ratio * A_i
             clipped = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * A_i
             step_losses.append(-torch.min(unclipped, clipped))
 
         traj_loss = torch.stack(step_losses).mean()
+        group_losses.append(traj_loss)
+
+    return torch.stack(group_losses).mean()
+
+def compute_vectorized_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
+    group_losses = []
+
+    for i, traj in enumerate(trajs):
+        A_i = advantages[i]               # scalar advantage for this traj
+        lang = traj["language"]
+        
+        obs_list = traj["obs"]                           # length T list of dicts
+        unsq_list = traj["actions"]                      # length T list of (act_dim,) tensors (DETACHED)
+        old_lp_list = traj["logprobs"]                   # length T list of detached logprobs
+
+        T = len(obs_list)
+
+        unsq_batch = torch.stack(unsq_list, dim=0).to(policy_theta.device)
+        old_lp_batch = torch.stack(old_lp_list, dim=0).to(policy_theta.device)
+
+        lang_list = [lang] * T
+        print("before get action_probs")
+        print_gpu()
+
+        new_logprobs = policy_theta.get_action_prob_batched(
+            obs_list,
+            lang_list,
+            unsq_batch
+        )   # shape (T,), requires grad
+        print("after get action_probs")
+        print_gpu()
+
+
+        ratios = torch.exp(new_logprobs - old_lp_batch)  # (T,)
+
+        unclipped = ratios * A_i
+        clipped = torch.clamp(ratios, 1 - epsilon, 1 + epsilon) * A_i
+
+        step_losses = -torch.min(unclipped, clipped)     # (T,)
+
+        traj_loss = step_losses.mean()
         group_losses.append(traj_loss)
 
     return torch.stack(group_losses).mean()
@@ -171,7 +216,7 @@ def train_grpo(args):
             total_loss = 0.0
             for rollout_group, advantages, lang in batch:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                    loss = compute_grpo_loss(policy, policy_old, rollout_group, advantages, GRPO_EPSILON)
+                    loss = compute_vectorized_grpo_loss(policy, policy_old, rollout_group, advantages, GRPO_EPSILON)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(policy.policy.parameters(), 1.0)
                 optimizer.step()

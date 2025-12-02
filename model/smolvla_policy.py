@@ -61,6 +61,7 @@ class SmolVLALiberoPolicy:
             dtype=self.policy.model.log_std.dtype,
         )
         self.policy.model.log_std = nn.Parameter(new_log_std)
+        
 
     def train(self):
         self.policy.train()
@@ -112,7 +113,6 @@ class SmolVLALiberoPolicy:
         SmolVLA outputs normalized actions → we unnormalize using:
             real = norm * std + mean
         """
-
         return action_norm * self.action_std + self.action_mean
     
     def _tokenize_prompt(self, task_description):
@@ -150,9 +150,52 @@ class SmolVLALiberoPolicy:
             "observation.images.image": agentview_img,
             "observation.images.image2": eye_img,
             "observation.state": state,
-            "observation.language.tokens": tokens,
+            "o"
+            "b"
+            ""
+            "servation.language.tokens": tokens,
             "observation.language.attention_mask": attn_mask,
         }
+    
+    def _build_batch_batched(self, obs_list, task_description_list):
+        """
+        obs_list: list of length N, each is an obs dict from the rollout.
+        task_description_list: list of length N (usually same string repeated).
+        Produces a single batch of size N.
+        """
+
+        # ---- images ----
+        agent_imgs = []
+        eye_imgs = []
+        states = []
+        tokens_list = []
+        attn_masks = []
+
+        for obs, lang in zip(obs_list, task_description_list):
+            agent_img, eye_img = self._extract_images(obs)
+            agent_imgs.append(agent_img)         # (3,H,W)
+            eye_imgs.append(eye_img)
+            states.append(self._extract_state(obs))  # (8,)
+
+            t, m = self._tokenize_prompt(lang)  # each returns (1,L)
+            tokens_list.append(t.squeeze(0))
+            attn_masks.append(m.squeeze(0))
+
+        # stack -> (N, 3, H, W), (N,8), (N,L)
+        agent_imgs = torch.stack(agent_imgs, dim=0).to(self.device)
+        eye_imgs = torch.stack(eye_imgs, dim=0).to(self.device)
+        states = torch.stack(states, dim=0).to(self.device)
+        tokens = torch.stack(tokens_list, dim=0).to(self.device)
+        attn_masks = torch.stack(attn_masks, dim=0).to(self.device)
+
+        return {
+            "observation.images.image": agent_imgs,
+            "observation.images.image2": eye_imgs,
+            "observation.state": states,
+            "observation.language.tokens": tokens,
+            "observation.language.attention_mask": attn_masks,
+        }
+
 
     def get_action(self, obs, language):
         batch = self._build_batch(obs, language)
@@ -176,9 +219,26 @@ class SmolVLALiberoPolicy:
         mean = self._unnormalize_action(mean)
         
         return mean, log_std
+    
+    def get_action_distr_params_batched(self, obs_list, language_list):
+        batch = self._build_batch_batched(obs_list, language_list)
+        mean, log_std = self.policy.select_action_distr_params_batched(batch)
+        # we want the pretrained action outputs to be our means. Currently, mean would not be equal to the action output of
+        # the pretrained policy because we haven't normalized, so normalize it
+        mean = self._unnormalize_action(mean)
+        
+        return mean, log_std
 
     def get_action_distr(self, obs, language):
         mean, log_std = self.get_action_distr_params(obs, language)
+
+        std = torch.exp(log_std)
+        distr = torch.distributions.Normal(mean, std)
+
+        return distr
+    
+    def get_action_distr_batched(self, obs_list, language_list):
+        mean, log_std = self.get_action_distr_params_batched(obs_list, language_list)
 
         std = torch.exp(log_std)
         distr = torch.distributions.Normal(mean, std)
@@ -197,6 +257,10 @@ class SmolVLALiberoPolicy:
     def get_action_prob(self, obs, language, unsquished_action):
         distr = self.get_action_distr(obs, language)
         return self.calculate_log_prob(distr, unsquished_action, torch.tanh(unsquished_action))
+    
+    def get_action_prob_batched(self, obs_list, language_list, unsquished_action_list):
+        distr = self.get_action_distr_batched(obs_list, language_list)
+        return self.calculate_log_prob(distr, unsquished_action_list, torch.tanh(unsquished_action_list))
     
     def sample_action(self, obs, language):
         distr = self.get_action_distr(obs, language)
