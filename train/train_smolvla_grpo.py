@@ -8,8 +8,8 @@ from torch.utils.tensorboard import SummaryWriter
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
-MAX_STEPS = 520
-GROUP_SIZE = 1
+MAX_STEPS = 360
+GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
 GRPO_EPSILON = 0.2
 
@@ -36,7 +36,7 @@ def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=No
 
         env_action = action.cpu().numpy()[0]
 
-        print(f"[ROLLOUT step {step:03d} GROUP {group_num}] reward={float(total_reward):+.3f} "
+        print(f"[ROLLOUT {rollout_idx} step {step:03d} GROUP {group_num}] reward={float(total_reward):+.3f} "
               f"action_norm={float(torch.norm(unsquished_action)):.4f} "
               f"logp={float(log_prob):+.4f}")
 
@@ -83,14 +83,17 @@ def sample_group_trajectories(env, policy_old, language, G, group_num):
 
 def compute_group_advantages(trajs):
     rewards = torch.tensor([t["reward"] for t in trajs], dtype=torch.float32)
+    
     mean_r = rewards.mean()
     std_r = rewards.std()
+    mean_r = torch.nan_to_num(mean_r, nan=0.0) # is nan when there is 0 reward
+    std_r = torch.nan_to_num(std_r, nan=0.0)
 
     advantages = (rewards - mean_r) / (std_r + 1e-8)
 
     print("[ADVANTAGES] Rewards:", rewards.tolist())
     print("[ADVANTAGES] Advantages:", advantages.tolist())
-    print()
+ 
 
     return advantages
 
