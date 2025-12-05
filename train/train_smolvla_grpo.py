@@ -3,19 +3,20 @@ import numpy as np
 import argparse
 import copy
 from torch.utils.tensorboard import SummaryWriter
-
+from utils.print_gpu import print_gpu
 
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
-MAX_STEPS = 360
+MAX_STEPS = 50
 GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
+UPDATE_CHUNK_SIZE = 5
+EULER_STEP_NOISE_STD = 0.5
+INIT_LOG_STD = -2
 GRPO_EPSILON = 0.2
 
-# TODO: logwriting (probably with tensorboard)
-# TODO: added autocast so when running things just make sure that isn't causing any errors
-# TODO: maybe add debug logging using logging module just for quality of life
+# TODO: change to logging module for speed/qol
 
 def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=None):
     print("-" * 60)
@@ -98,38 +99,76 @@ def compute_group_advantages(trajs):
     return advantages
 
 
-def compute_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
-    group_losses = []
+def compute_grpo_loss(policy_theta, trajs, advantages, epsilon, timestep_chunk_size=10):
+    """
+    Compute GRPO loss with gradient accumulation over timestep chunks to save memory.
+    
+    Args:
+        policy_theta: training policy
+        trajs: list of trajectories
+        advantages: tensor of advantages for each trajectory
+        epsilon: clipping parameter
+        timestep_chunk_size: number of timesteps to process per trajectory before calling backward
+    """
+    all_step_losses = []
+    num_trajs = len(trajs)
 
     for i, traj in enumerate(trajs):
         A_i = advantages[i]
-        step_losses = []
-        lang = traj["language"]
+        prompt = traj["language"]
+        
+        obs_list = traj["obs"]
+        unsq_list = traj["actions"]
+        old_lp_list = traj["logprobs"]
+        total_timesteps = len(obs_list)
+        
+        # Process timesteps in chunks
+        for chunk_start in range(0, total_timesteps, timestep_chunk_size):
+            chunk_end = min(chunk_start + timestep_chunk_size, total_timesteps)
+            chunk_obs = []
+            unsquished_actions = []
+            old_lp_chunk = []
+            for t in range(chunk_start, chunk_end):
+                chunk_obs.append(obs_list[t]) 
+                unsquished_actions.append(unsq_list[t])
+                old_lp_chunk.append(old_lp_list[t])
 
-        for obs_t, unsquished_action_t, old_lp_t in zip(
-            traj["obs"], traj["actions"], traj["logprobs"]
-        ):
-            new_lp = policy_theta.get_action_prob(obs_t, lang, unsquished_action_t.to(policy_theta.device))
-            ratio = torch.exp(new_lp - old_lp_t.to(policy_theta.device))
+            unsquished_actions = torch.stack(unsquished_actions)
+            old_log_probs = torch.stack(old_lp_chunk)
+            new_log_probs = policy_theta.get_action_probs(chunk_obs, prompt, unsquished_actions)
+            ratio = torch.exp(new_log_probs - old_log_probs)
 
             unclipped = ratio * A_i
             clipped = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * A_i
-            step_losses.append(-torch.min(unclipped, clipped))
+            step_losses = -torch.min(unclipped, clipped)
+            
+            # Compute mean loss for this timestep chunk and backpropagate. Divide by (total_timesteps *)
+            # Divide by (total_timesteps * num_trajs) so gradients are scaled to the overall average (since in GRPO
+            # we average over rollout length and group size)
+            chunk_loss = step_losses.mean() / (total_timesteps * num_trajs)
+            chunk_loss.backward()
+            # test grads being accumd when force advantages to non zero
+            
+            # Collect losses for final averaging (detach to avoid keeping graph)
+            all_step_losses.append(step_losses.detach())
+            
+            # Clear unused memory
+            del chunk_loss, step_losses
 
-        traj_loss = torch.stack(step_losses).mean()
-        group_losses.append(traj_loss)
+    # Average over all timesteps across all trajectories
+    all_losses = torch.cat(all_step_losses)
+    avg_loss = all_losses.mean().item()
+    
+    return avg_loss
 
-    return torch.stack(group_losses).mean()
-
-
-def collect_batch(env_factory, languages, batch_size, policy_old):
+def collect_batch(env_factory, batch_size, policy_old):
     batch = []
     for group_num in range(batch_size):
         print(f"creating batch group {group_num+1}")
         env, lang = env_factory()  # new task each time
         rollout_group = sample_group_trajectories(env, policy_old, lang, GROUP_SIZE, group_num + 1)
         advantages = compute_group_advantages(rollout_group)
-        batch.append((rollout_group, advantages, lang))
+        batch.append((rollout_group, advantages))
         env.close()
     return batch
 
@@ -147,7 +186,8 @@ def train_grpo(args):
 
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
     set_up_policy_grads(policy)
-    policy.set_log_std(-3.0)
+    policy.set_log_std(INIT_LOG_STD)
+    policy.set_euler_step_noise_std(EULER_STEP_NOISE_STD)
     print("Set policy gradients and log std.")
     trainable_params = [p for p in policy.policy.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
@@ -163,25 +203,25 @@ def train_grpo(args):
     policy_old.eval()
 
     for update in range(args.num_updates):
-        batch = collect_batch(env_factory, None, args.batch_size, policy_old)
+        batch = collect_batch(env_factory, args.batch_size, policy_old)
         policy.train()
 
         epoch_losses = []
         for epoch in range(UPDATE_EPOCHS):
             total_loss = 0.0
-            for rollout_group, advantages, lang in batch:
+            for rollout_group, advantages in batch:
+                optimizer.zero_grad()
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                    loss = compute_grpo_loss(policy, policy_old, rollout_group, advantages, GRPO_EPSILON)
-                loss.backward()
+                    loss = compute_grpo_loss(policy, rollout_group, advantages, GRPO_EPSILON, timestep_chunk_size=UPDATE_CHUNK_SIZE)
+                # backward() is now called inside compute_grpo_loss to accumulate gradients
                 torch.nn.utils.clip_grad_norm_(policy.policy.parameters(), 1.0)
                 optimizer.step()
-                optimizer.zero_grad()
-                total_loss += loss.item()
+                total_loss += loss
 
             epoch_losses.append(total_loss / len(batch))
 
         avg_loss = np.mean(epoch_losses)
-        avg_reward = np.mean([np.mean([t["reward"] for t in g]) for g, _, _ in batch])
+        avg_reward = np.mean([np.mean([t["reward"] for t in g]) for g, _ in batch])
 
         print(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
 

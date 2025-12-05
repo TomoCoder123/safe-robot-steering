@@ -7,8 +7,8 @@ import imageio
 import os
 FPS = 60
 
-TASK_SUITE_NAME = "libero_spatial" 
-STEPS = 280 #lerobot libero default for object, 520 is default for long
+TASK_SUITE_NAME = "libero_10" 
+STEPS = 200 #lerobot libero default for object, 520 is default for long
 def main():
     print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
     print("torch.cuda.device_count():", torch.cuda.device_count())

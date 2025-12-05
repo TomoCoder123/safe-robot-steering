@@ -10,6 +10,7 @@ from transformers import AutoTokenizer
 from utils.find_normalizer_constants import obtain_dataset_normalizer_stats
 from utils.find_unnormalizer_constants import obtain_dataset_unnormalizer_stats
 from robosuite.utils.transform_utils import quat2axisangle
+import math
 
 # NOTE: there are these already-configured pre/post processing pipelines in lerobot but they're very convoluted and buggy.
 # I just referenced how they do things and made it so we do each step within our own mapping code from LIBERO observation -> model input
@@ -61,6 +62,9 @@ class SmolVLALiberoPolicy:
             dtype=self.policy.model.log_std.dtype,
         )
         self.policy.model.log_std = nn.Parameter(new_log_std)
+        
+    def set_euler_step_noise_std(self, std):
+        self.policy.euler_step_noise_std = std
 
     def train(self):
         self.policy.train()
@@ -112,7 +116,6 @@ class SmolVLALiberoPolicy:
         SmolVLA outputs normalized actions → we unnormalize using:
             real = norm * std + mean
         """
-
         return action_norm * self.action_std + self.action_mean
     
     def _tokenize_prompt(self, task_description):
@@ -153,6 +156,40 @@ class SmolVLALiberoPolicy:
             "observation.language.tokens": tokens,
             "observation.language.attention_mask": attn_mask,
         }
+    
+    def _build_batch_from_chunk(self, chunk_obs, prompt):
+        """
+        chunk_obs: list of all observations in chunk
+        prompt: language prompt for time steps in this chunk
+        """
+
+        # ---- images ----
+        agent_imgs = []
+        eye_imgs = []
+        states = []
+
+        for obs in chunk_obs:
+            agent_img, eye_img = self._extract_images(obs)
+            agent_imgs.append(agent_img)         # (3,H,W)
+            eye_imgs.append(eye_img)
+            states.append(self._extract_state(obs))  # (8,)
+
+        t, m = self._tokenize_prompt(prompt)  
+        tokens = t.expand(len(chunk_obs), -1).to(self.device)
+        attn_masks = m.expand(len(chunk_obs), -1).to(self.device)
+
+        # stack -> (N, 3, H, W), (N,8), (N,L)
+        agent_imgs = torch.stack(agent_imgs, dim=0).to(self.device)
+        eye_imgs = torch.stack(eye_imgs, dim=0).to(self.device)
+        states = torch.stack(states, dim=0).to(self.device)
+
+        return {
+            "observation.images.image": agent_imgs,
+            "observation.images.image2": eye_imgs,
+            "observation.state": states,
+            "observation.language.tokens": tokens,
+            "observation.language.attention_mask": attn_masks,
+        }
 
     def get_action(self, obs, language):
         batch = self._build_batch(obs, language)
@@ -167,48 +204,49 @@ class SmolVLALiberoPolicy:
 
         return action
 
-    # GRPO functions
-    def get_action_distr_params(self, obs, language):
+    """
+    mean and log_std are (N, A) where each A slice represents parameters for a different Gaussian
+    unsquished_action and squished_action are (N, A) where each A slice is an action at a timestep
+    We calculate log prob density directly, ie without creating intermediate distribution objects
+    """
+    def calculate_log_prob(self, mean, log_std, unsquished_action, squished_action):
+        # Gaussian log_prob in u-space
+        std = torch.exp(log_std)
+        var = std * std
+        log_prob_unsquished = -0.5 * (((unsquished_action - mean)**2) / var + 2 * log_std + math.log(2 * math.pi))
+        log_prob_unsquished = log_prob_unsquished.sum(dim=-1)
+
+        # tanh squish correction
+        correction = torch.sum(torch.log(1 - squished_action.pow(2) + self.eps), dim=-1)
+        log_prob = log_prob_unsquished - correction
+        return log_prob
+   
+    def sample_action(self, obs, language):
         batch = self._build_batch(obs, language)
         mean, log_std = self.policy.select_action_distr_params(batch)
         # we want the pretrained action outputs to be our means. Currently, mean would not be equal to the action output of
         # the pretrained policy because we haven't normalized, so normalize it
         mean = self._unnormalize_action(mean)
-        
-        return mean, log_std
-
-    def get_action_distr(self, obs, language):
-        mean, log_std = self.get_action_distr_params(obs, language)
-
         std = torch.exp(log_std)
         distr = torch.distributions.Normal(mean, std)
-
-        return distr
-
-    def calculate_log_prob(self, distr, unsquished_action, squished_action):
-        # tanh squish correction
-        log_prob_unsquished = distr.log_prob(unsquished_action).sum(dim=-1)
-        correction = torch.sum(torch.log(1 - squished_action.pow(2) + self.eps), dim=-1)
-        log_prob = log_prob_unsquished - correction
-        return log_prob
-
-    # for when we need probability ratios. This uses self's outputted distribution given obs and language to calculate
-    # the probability 
-    def get_action_prob(self, obs, language, unsquished_action):
-        distr = self.get_action_distr(obs, language)
-        return self.calculate_log_prob(distr, unsquished_action, torch.tanh(unsquished_action))
-    
-    def sample_action(self, obs, language):
-        distr = self.get_action_distr(obs, language)
 
         # tanh squish action to -1, 1. Better than clamping because it just squishes the Gaussian, keeping it entirely differentiable
         unsquished_action = distr.rsample()
         action = torch.tanh(unsquished_action)
 
-        log_prob = self.calculate_log_prob(distr, unsquished_action, action)
+        log_prob = self.calculate_log_prob(mean, log_std, unsquished_action, action)
 
         # return unsquished_action to use it in calculating probability ratio because can't always invert squished to get unsquished term needed in correction
         return action, log_prob, unsquished_action
+
+    # for when we need probability ratios. This uses self's outputted distribution given obs and language to calculate
+    # the probability. This implementation assumes we're chunking over timesteps within the same trajectory
+    def get_action_probs(self, chunk_obs, prompt, unsquished_actions):
+        batch = self._build_batch_from_chunk(chunk_obs, prompt)
+        mean, log_std = self.policy.select_action_distr_params(batch)
+        mean = self._unnormalize_action(mean)
+        squished_actions = torch.tanh(unsquished_actions)
+        return self.calculate_log_prob(mean, log_std, unsquished_actions, squished_actions)
 
     @torch.no_grad()
     def reset(self):
