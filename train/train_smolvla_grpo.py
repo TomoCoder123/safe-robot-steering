@@ -121,6 +121,10 @@ def compute_grpo_loss(policy_theta, trajs, advantages, epsilon, timestep_chunk_s
         epsilon: clipping parameter
         timestep_chunk_size: number of timesteps to process per trajectory before calling backward
     """
+    if torch.allclose(advantages, torch.zeros_like(advantages)):
+        logger.info("[SKIP] All advantages are zero. Skipping GRPO backprop.")
+        return 0.0
+
     all_step_losses = []
     num_trajs = len(trajs)
 
