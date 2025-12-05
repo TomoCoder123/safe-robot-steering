@@ -9,11 +9,11 @@ from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 import logging
 
-MAX_STEPS = 50
+MAX_STEPS = 520
 GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
-UPDATE_CHUNK_SIZE = 5
-EULER_STEP_NOISE_STD = 0.5
+UPDATE_CHUNK_SIZE = 20
+EULER_STEP_NOISE_STD = 0.25
 INIT_LOG_STD = -2
 GRPO_EPSILON = 0.2
 
