@@ -13,7 +13,7 @@ MAX_STEPS = 520
 GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
 UPDATE_CHUNK_SIZE = 20
-EULER_STEP_NOISE_STD = 0.25
+EULER_STEP_NOISE_STD = 0.2
 INIT_LOG_STD = -2
 GRPO_EPSILON = 0.2
 
@@ -88,7 +88,6 @@ def sample_group_trajectories(env, policy_old, language, G, group_num):
     rewards = [r["reward"] for r in rollouts]
     logger.info(f"[GROUP SUMMARY] rewards={rewards}")
     logger.info(f"[GROUP SUMMARY] mean={np.mean(rewards):.3f}, std={np.std(rewards):.3f}")
-    logger.info()
 
     return rollouts
 
@@ -104,8 +103,8 @@ def compute_group_advantages(trajs):
 
     advantages = (rewards - mean_r) / (std_r + 1e-8)
 
-    logger.info("[ADVANTAGES] Rewards:", rewards.tolist())
-    logger.info("[ADVANTAGES] Advantages:", advantages.tolist())
+    logger.info(f"[ADVANTAGES] Rewards: {rewards.tolist()}")
+    logger.info(f"[ADVANTAGES] Advantages: {advantages.tolist()}")
  
 
     return advantages
@@ -157,7 +156,7 @@ def compute_grpo_loss(policy_theta, trajs, advantages, epsilon, timestep_chunk_s
             # Compute mean loss for this timestep chunk and backpropagate. Divide by (total_timesteps *)
             # Divide by (total_timesteps * num_trajs) so gradients are scaled to the overall average (since in GRPO
             # we average over rollout length and group size)
-            chunk_loss = step_losses.mean() / (total_timesteps * num_trajs)
+            chunk_loss = step_losses.sum() / (total_timesteps * num_trajs)
             chunk_loss.backward()
             # test grads being accumd when force advantages to non zero
             
@@ -262,8 +261,8 @@ def parse_args():
     parser.add_argument("--task-suite", type=str, default="libero_10")
     parser.add_argument("--batch-size", type=int, default=1)     # number of tasks per update
     parser.add_argument("--lr", type=float, default=1e-5)
-    parser.add_argument("--num-updates", type=int, default=200)
-    parser.add_argument("--save-every", type=int, default=10)
+    parser.add_argument("--num-updates", type=int, default=150)
+    parser.add_argument("--save-every", type=int, default=5)
     parser.add_argument("--save-dir", type=str, default = "checkpoints")
     return parser.parse_args()
 
