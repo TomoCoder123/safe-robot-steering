@@ -4,8 +4,6 @@ import random
 from model.smolvla_policy import SmolVLALiberoPolicy
 from sklearn.neighbors import NearestNeighbors
 
-
-
 """
 Outputs a list. Contains 1 object, a module that contains the LM head, which has unembedding matrix
 Necessary to project value vectors onto the token space
@@ -108,27 +106,40 @@ def word_in_tokens(top_k_token_list, word):
 """
 Neuron grouping using KNN and semantic embeddings of neurons.
 Input: list of top k tokens (2560, 30). logits (2560, 49280). unembedding matrix (49280, 960)
-Output: list of tuples. neuron number, as well as semantic embedding (averaged vector of top k tokens)
+Output: list of tuples. activation number, as well as semantic embedding (averaged vector of top k tokens)
 """
-def create_semantic_embeddings(top_k_tokens_list, logits, embed_mat, tokenizer):
-    avgs = []
-    for num in range(len(top_k_tokens_list)): #2560
-        
-        for token in top_k_tokens_list[num]:
-            token_id = tokenizer.convert_tokens_to_ids(token)
-            token_embed_vector = embed_mat[token_id]
-            token_logit = logits[num][token_id]
-            sum += token_logit * token_embed_vector
-            avgs.append((num, token_logit * token_embed_vector))
-    return avgs
+def create_semantic_embeddings(logits, unembed_mat, k):
+    topk_vals, topk_ids = torch.topk(logits, k=k, dim=1)    #2560 x 30
+    token_vecs = unembed_mat[topk_ids] # (2560, 30, 960)
 
-def KNN(sem_embed, activation_ID):
-    knn = NearestNeighbors(n_neighbors = 21, metric = "cosine")
+    #L2 normalization in order to create unit vectors for cosine similarity
+    token_vecs = token_vecs / (token_vecs.norm())
+
+    # computing weights of topk_vals using a softmax function
+    weights = torch.softmax(topk_vals, dim=1)       #dimensions are 2560 x 30 still 
+    weights = weights.unsqueeze(-1) #"Unsqueeze" to add another dimension to match that of token_vecs. "-1" denotes addition at the last dimension
+    # Thus, we have (2560 x 30 x 1)
+
+    semantic_embeds = (token_vecs * weights).sum(dim=1)    #This 3D multiplication allows us to generate 2560 x 960. We sum over the dimension w/ size 30.
+    semantic_embeds = semantic_embeds / (semantic_embeds.norm())
+
+    print(semantic_embeds.shape)
+
+    return semantic_embeds
+
+
+def KNN(sem_embed, activation_ID, k):
+    #sklearn utilizes CPU. However, sem_embed is a torch tensor on GPU.
+
+    sem_embed = sem_embed.to(torch.float32).detach().cpu().numpy() #converting tensor to ndarray
+    knn = NearestNeighbors(n_neighbors = k + 1, metric = "cosine") #10 + self = 11. Choosing 10 because with 20, the cluster size may be too big at layer 16.
     knn.fit(sem_embed)
 
-    distances, indices = knn.kneighbors(sem_embed[activation_ID:activation_ID+1])
+    distances, indices = knn.kneighbors(sem_embed[activation_ID:activation_ID+1]) #sem_embed is 2560 x 960, thus the input is the row of 960 
 
     return distances, indices
+
+
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -141,6 +152,9 @@ def main():
     LM_head = find_LMhead(policy.policy) #still the module
     embed_matrix = LM_head[0][1].weight #convert the module to the tensor
 
+    """
+    In this workflow, this is where we change the layer number.
+    """
     layer = 15 #N/2 = 16, indexing begins at 0
     value_vectors = extract_value_vectors(down_projs, layer)
     logits = project_tkn_space(value_vectors, embed_matrix) # these are the logits, the semantic embeddings in token space?
@@ -151,16 +165,19 @@ def main():
     k = 30 #as used by Haon et al.
     top_k_tokens, top_k_scores = get_top_k_tokens(logits, policy.tokenizer, k)
 
+    print(embed_matrix.shape)
+
     """
     Output the value vectors that have tokens with the word fast. Manually search for value vectors with semantic meaning.
     """
     word_in_tokens(top_k_tokens, "fast")
 
-    semantic_embeddings = create_semantic_embeddings(top_k_tokens, logits, embed_matrix, policy.tokenizer)
-    print(semantic_embeddings)
+    semantic_embeddings = create_semantic_embeddings(logits, embed_matrix, 30) #using k=30
+    print(semantic_embeddings) #prints out 2560 unit vectors in R^960 space
 
-
-
+    distances, indices = KNN(semantic_embeddings, 126, 20)
+    print(distances) # These distances are unitless and based on cosine similarity
+    print(indices)
     
 
     #cluster to find the neurons for "Fast" or "Up". choose one
