@@ -167,8 +167,8 @@ def compute_grpo_loss(policy_theta, trajs, advantages, epsilon, timestep_chunk_s
             del chunk_loss, step_losses
 
     # Average over all timesteps across all trajectories
-    all_losses = torch.cat(all_step_losses)
-    avg_loss = all_losses.mean().item()
+    flat_losses = torch.cat([chunk.flatten() for chunk in all_step_losses])
+    avg_loss = flat_losses.mean().item()
     
     return avg_loss
 
