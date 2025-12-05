@@ -192,7 +192,7 @@ def set_up_policy_grads(policy):
     policy.policy.model.log_std.requires_grad = True
 
 def train_grpo(args):
-    writer = SummaryWriter(log_dir="runs/grpo_smolvla")
+    writer = SummaryWriter(log_dir="runs/grpo_smolvla_tb")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
