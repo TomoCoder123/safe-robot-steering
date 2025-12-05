@@ -15,8 +15,7 @@ dependencies = [
     "transformers (>=4.57.3,<5.0.0)",
     "imageio (>=2.37.2,<3.0.0)",
 ]
-[tool.poetry]
-package-mode = false
+
 
 # having this or not doesn't appear to matter, only running poetry add ./libero-local does. but this is weird
 [tool.poetry.dependencies] 
