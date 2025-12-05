@@ -127,7 +127,11 @@ def create_semantic_embeddings(logits, unembed_mat, k):
 
     return semantic_embeds
 
-
+"""
+K-nearest neighbors algorithm through sklearn. 
+Finding the k nearest semantic embeddings for a given activation.
+Clustering, in essence.
+"""
 def KNN(sem_embed, activation_ID, k):
     #sklearn utilizes CPU. However, sem_embed is a torch tensor on GPU.
 
@@ -138,6 +142,19 @@ def KNN(sem_embed, activation_ID, k):
     distances, indices = knn.kneighbors(sem_embed[activation_ID:activation_ID+1]) #sem_embed is 2560 x 960, thus the input is the row of 960 
 
     return distances, indices
+
+
+def perform_downproj_steering(policy, layer, cluster, alpha):
+    down_projs = find_down_projs(policy)
+    steered_layer = down_projs[layer]
+
+
+    return steered_layer
+
+"""
+def word_to_steer(word, policy, alpha):
+    perform_steering
+    """
 
 
 
@@ -178,6 +195,10 @@ def main():
     distances, indices = KNN(semantic_embeddings, 126, 20)
     print(distances) # These distances are unitless and based on cosine similarity
     print(indices)
+
+    #constant for activation replacement
+    alpha = 10 
+    print(perform_downproj_steering(policy.policy, layer, indices, alpha)[1])
     
 
     #cluster to find the neurons for "Fast" or "Up". choose one
