@@ -15,9 +15,12 @@ This README describes how to set up the environment, install dependencies, confi
 
 ## Installation
 
+Install OSMesa on your machine
+
 ```bash
 poetry install
 git submodule update --init --recursive
+poetry add ./lerobot-local
 ```
 
 ---
