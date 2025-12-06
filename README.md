@@ -20,7 +20,6 @@ Install OSMesa on your machine
 ```bash
 poetry install
 git submodule update --init --recursive
-poetry add ./lerobot-local
 ```
 
 ---
@@ -37,6 +36,8 @@ export CUDA_VISIBLE_DEVICES=1
 source ~/.bashrc
 ```
 
+Set LIBERO_CONFIG_PATH to the absolute path to the parent directory of configs/ in the LIBERO submodule
+
 ---
 
 ## Add Local `lerobot` Package
@@ -49,15 +50,13 @@ poetry add lerobot-local/
 
 ---
 
-## Set Project Root for Python
+## Confirm Installation
+
+From the project root:
 
 ```bash
-export PYTHONPATH="$HOME/safe-robot-steering:$PYTHONPATH"
+poetry run python experiments/evaluate_one_task_success.py
 ```
-
-This allows Python to find the `safe-robot-steering` modules.
-
----
 
 ## TensorBoard (Local)
 
