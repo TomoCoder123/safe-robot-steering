@@ -1,5 +1,5 @@
 # Steering Robots Safely
-![Uploading ArchitectureDiagram.png…]()
+<img width="1234" height="772" alt="ArchitectureDiagram" src="https://github.com/user-attachments/assets/0890dcef-9681-41d4-9a15-9365b5814249" />
 
 # Project Setup and Usage
 
