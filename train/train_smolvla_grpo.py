@@ -196,8 +196,8 @@ def train_grpo(args):
 
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
     set_up_policy_grads(policy)
-    ckpt = torch.load(args.load_from, map_location=device) #, weights_only=False
-    policy.policy.load_state_dict(ckpt["policy_state_dict"])
+    #ckpt = torch.load(args.load_from, map_location=device) #, weights_only=False
+    #policy.policy.load_state_dict(ckpt["policy_state_dict"])
     
     policy.set_log_std(INIT_LOG_STD)
     policy.set_euler_step_noise_std(EULER_STEP_NOISE_STD)
