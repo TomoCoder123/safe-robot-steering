@@ -11,9 +11,9 @@ import logging
 
 MAX_STEPS = 520
 GROUP_SIZE = 4
-UPDATE_EPOCHS = 4
+UPDATE_EPOCHS = 2
 UPDATE_CHUNK_SIZE = 5
-EULER_STEP_NOISE_STD = 0.3
+EULER_STEP_NOISE_STD = 0.1
 INIT_LOG_STD = -2
 GRPO_EPSILON = 0.2
 
@@ -196,6 +196,9 @@ def train_grpo(args):
 
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
     set_up_policy_grads(policy)
+    ckpt = torch.load(args.load_from, map_location=device)
+    policy.policy.load_state_dict(ckpt["policy_state_dict"])
+    
     policy.set_log_std(INIT_LOG_STD)
     policy.set_euler_step_noise_std(EULER_STEP_NOISE_STD)
     logger.info("Set policy gradients and log std.")
@@ -263,6 +266,8 @@ def parse_args():
     parser.add_argument("--num-updates", type=int, default=150)
     parser.add_argument("--save-every", type=int, default=5)
     parser.add_argument("--save-dir", type=str, default = "checkpoints")
+    parser.add_argument("--load-from", type=str, default=None,
+                    help="Path to a checkpoint .pt file to load the policy from.")
     return parser.parse_args()
 
 
